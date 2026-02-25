@@ -29,8 +29,8 @@ Your objective will be to teach an agent how to drive on a highway, among many c
 *Analysis could include exploration of hyperparameters, figures of training, explainations of how your algorithm works*
 
 ### Roadmap
-- 📆 **23 feb 2025**: your groups are all 
-- 📆 **TO DECIDE** : Deadline for the report (5-10 pages) and code (notebook / script)
+- 📆 **23 Feb**: your groups are all complete.
+- 📆 **25 March** : Deadline for the report (5-10 pages) and code (notebook / script)
 
 
 

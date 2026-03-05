@@ -206,7 +206,7 @@ try:
     model_ppo = PPO(
         "MlpPolicy",
         train_env,
-        policy_kwargs=dict(net_arch=[dict(pi=[256, 256], vf=[256, 256])]),
+        policy_kwargs=dict(net_arch=dict(pi=[256, 256], vf=[256, 256])),
         learning_rate=5e-4,
         n_steps=256,
         batch_size=64,
@@ -365,7 +365,7 @@ class DQNAgent:
         }, path)
 
     def load(self, path):
-        checkpoint = torch.load(path, map_location=self.device)
+        checkpoint = torch.load(path, map_location=self.device, weights_only=False)
         self.q_net.load_state_dict(checkpoint["q_net"])
         self.target_net.load_state_dict(checkpoint["target_net"])
         self.epsilon = checkpoint.get("epsilon", self.epsilon_end)

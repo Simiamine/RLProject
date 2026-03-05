@@ -434,8 +434,32 @@ training_histories = {}
 # %% [markdown]
 # ## Algorithm 1 : DQN (Stable-Baselines3)
 #
-# Deep Q-Network -- value-based, off-policy method. Natural fit for discrete
-# action spaces. Uses a replay buffer and a target network for stability.
+# ### How DQN works
+#
+# **Deep Q-Network** (Mnih et al., 2015) approximates the optimal action-value
+# function $Q^*(s, a)$ using a neural network. At each step the agent picks the
+# action with the highest predicted Q-value (or explores randomly with
+# probability $\varepsilon$).
+#
+# Two key innovations stabilize training:
+#
+# - **Experience Replay Buffer**: transitions $(s, a, r, s', done)$ are stored
+#   in a fixed-size buffer and sampled randomly for training, breaking temporal
+#   correlation between consecutive samples.
+# - **Target Network**: a separate copy of the Q-network (updated every $N$
+#   steps) provides stable regression targets:
+#   $$y = r + \gamma \max_{a'} Q_{\text{target}}(s', a')$$
+#
+# The loss is the mean squared TD error:
+# $$\mathcal{L} = \mathbb{E}\left[\left(Q(s,a) - y\right)^2\right]$$
+#
+# DQN is **off-policy** (learns from replay data) and naturally suited to
+# **discrete** action spaces like our 5 meta-actions.
+#
+# **Hyperparameters** (tuned via grid search, see below):
+# - `gamma`: discount factor (controls how far ahead the agent plans)
+# - `learning_rate`: step size for gradient descent
+# - `buffer_size`, `batch_size`, `target_update_interval`: replay mechanics
 
 # %%
 from stable_baselines3 import DQN
@@ -508,8 +532,30 @@ training_histories["DQN (SB3)"] = {
 # %% [markdown]
 # ## Algorithm 2 : PPO (Stable-Baselines3)
 #
-# Proximal Policy Optimization -- actor-critic, on-policy method. Clips the
-# policy ratio to prevent destructively large updates.
+# ### How PPO works
+#
+# **Proximal Policy Optimization** (Schulman et al., 2017) is an actor-critic,
+# on-policy method. It directly optimizes a parameterized policy $\pi_\theta(a|s)$.
+#
+# The **actor** (policy network) outputs action probabilities; the **critic**
+# (value network) estimates $V(s)$ to compute the **advantage**:
+# $$A_t = R_t - V(s_t)$$
+# where $R_t$ is the discounted return (often estimated via GAE).
+#
+# PPO clips the importance-sampling ratio to prevent destructively large updates:
+# $$\mathcal{L}^{CLIP} = \mathbb{E}\left[\min\left(r_t(\theta) A_t,\;\text{clip}(r_t(\theta), 1-\varepsilon, 1+\varepsilon) A_t\right)\right]$$
+# where $r_t(\theta) = \frac{\pi_\theta(a_t|s_t)}{\pi_{\theta_{old}}(a_t|s_t)}$.
+#
+# Unlike DQN, PPO is **on-policy**: it collects a batch of experience with the
+# current policy, updates, then discards the data. This makes it less
+# sample-efficient but more stable.
+#
+# **Hyperparameters** (tuned via grid search):
+# - `gamma`: discount factor
+# - `learning_rate`: optimizer step size
+# - `clip_range` ($\varepsilon$): controls the trust region size
+# - `n_steps`: number of steps collected before each update
+# - `n_epochs`: how many passes over the collected batch
 
 # %%
 from stable_baselines3 import PPO
@@ -542,7 +588,7 @@ if RETRAIN or not Path("models/highway_ppo.zip").exists():
         "MlpPolicy",
         train_env_ppo,
         device=DEVICE_SB3,
-        policy_kwargs=dict(net_arch=[dict(pi=[256, 256], vf=[256, 256])]),
+        policy_kwargs=dict(net_arch=dict(pi=[256, 256], vf=[256, 256])),
         learning_rate=5e-4,
         n_steps=256,
         batch_size=64,
@@ -577,9 +623,32 @@ training_histories["PPO (SB3)"] = {
 # %% [markdown]
 # ## Algorithm 3 : DQN from scratch (PyTorch)
 #
-# Manual implementation of DQN to demonstrate understanding of the algorithm.
-# Components: Q-Network (MLP), Replay Buffer, Target Network, epsilon-greedy
-# policy, and the full training loop.
+# ### Why implement from scratch?
+#
+# To demonstrate a deep understanding of DQN, we implement it entirely with
+# PyTorch -- no SB3. This lets us control every detail: the network, the
+# replay buffer, epsilon scheduling, and the training loop.
+#
+# ### Architecture
+#
+# - **QNetwork**: MLP with 2 hidden layers of 256 units + ReLU activations.
+#   Input = flattened observation (5 vehicles x 5 features = 25), output = 5
+#   Q-values (one per action).
+# - **ReplayBuffer**: circular buffer (deque) of capacity 15,000 transitions.
+# - **Target Network**: hard copy of QNetwork weights, synchronized every 50
+#   gradient steps.
+# - **Epsilon-greedy**: $\varepsilon$ decays linearly from 1.0 to 0.05 over
+#   15,000 steps, then stays at 0.05.
+#
+# ### Difference with SB3 DQN
+#
+# SB3 adds many engineering optimizations (vectorized envs, automatic
+# normalization, logging, etc.). Our manual version is simpler but gives us
+# full control over the training loop, which is useful for debugging and
+# understanding.
+#
+# The `predict()` method is made compatible with SB3's interface so that the
+# professor's `evaluate()` and `record_video()` functions work seamlessly.
 
 # %%
 import torch
@@ -723,7 +792,7 @@ class DQNAgent:
         }, path)
     
     def load(self, path):
-        checkpoint = torch.load(path, map_location=self.device)
+        checkpoint = torch.load(path, map_location=self.device, weights_only=False)
         self.q_net.load_state_dict(checkpoint["q_net"])
         self.target_net.load_state_dict(checkpoint["target_net"])
         self.epsilon = checkpoint.get("epsilon", self.epsilon_end)
@@ -810,6 +879,12 @@ training_histories["DQN (manual)"] = {
 
 # %% [markdown]
 # ## Benchmark : comparing the 3 algorithms
+#
+# We evaluate each trained model on the **EVAL_CONFIG** (3 lanes, 40 aggressive
+# vehicles, 40s duration) over **30 episodes**. Metrics:
+# - **Mean reward**: higher is better (max ~40 for a collision-free episode)
+# - **Std reward**: lower means more consistent behavior
+# - **Mean episode length**: longer means the agent survives longer without collision
 
 # %%
 import matplotlib.pyplot as plt
@@ -864,6 +939,124 @@ plt.tight_layout()
 plt.savefig("figures/benchmark_comparison.png", dpi=150)
 plt.show()
 print("Saved to figures/benchmark_comparison.png")
+
+# %% [markdown]
+# ## Hyperparameter Exploration
+#
+# We performed a grid search over **gamma** and **learning_rate** for each
+# algorithm (5 configurations per algo = 15 total). Each config was explored
+# with a quick training run (30k steps for SB3, 200 episodes for manual DQN),
+# then evaluated on EVAL_CONFIG.
+#
+# The best configuration per algorithm was then re-trained at full power (100k
+# steps / 600 episodes). See `hyperparam_search.py` for the full script.
+
+# %%
+import json
+
+hp_path = Path("models/hyperparam_results.json")
+if hp_path.exists():
+    with open(hp_path) as f:
+        hp_results = json.load(f)
+    
+    for algo_name, label in [("dqn_sb3", "DQN (SB3)"), ("ppo_sb3", "PPO (SB3)"), ("dqn_manual", "DQN (manual)")]:
+        results = hp_results.get(algo_name, [])
+        if results:
+            print(f"\n{'='*50}")
+            print(f"  {label} - Hyperparameter Grid")
+            print(f"{'='*50}")
+            print(f"  {'gamma':>6} {'lr':>10} {'reward':>10} {'std':>8} {'length':>8}")
+            print(f"  {'-'*46}")
+            best_r = max(r.get("reward", -999) for r in results if "error" not in r)
+            for r in results:
+                if "error" in r:
+                    print(f"  {r['gamma']:>6} {r['lr']:>10.0e} {'FAILED':>10}")
+                else:
+                    mark = " <-- BEST" if r["reward"] == best_r else ""
+                    print(f"  {r['gamma']:>6} {r['lr']:>10.0e} {r['reward']:>10.2f} {r['std']:>8.2f} {r['length']:>8.0f}{mark}")
+else:
+    print("No hyperparameter results found. Run hyperparam_search.py first.")
+
+# %%
+if hp_path.exists():
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    
+    algo_labels = {"dqn_sb3": "DQN (SB3)", "ppo_sb3": "PPO (SB3)", "dqn_manual": "DQN (manual)"}
+    algo_colors = {"dqn_sb3": "#2196F3", "ppo_sb3": "#4CAF50", "dqn_manual": "#FF9800"}
+    
+    # Impact of gamma (averaged over lr)
+    ax = axes[0]
+    for algo_key, label in algo_labels.items():
+        results = [r for r in hp_results.get(algo_key, []) if "error" not in r]
+        if not results:
+            continue
+        gammas_seen = sorted(set(r["gamma"] for r in results))
+        avg_rewards = []
+        for g in gammas_seen:
+            rews = [r["reward"] for r in results if r["gamma"] == g]
+            avg_rewards.append(np.mean(rews))
+        ax.plot(gammas_seen, avg_rewards, "o-", label=label, color=algo_colors[algo_key], linewidth=2, markersize=8)
+    ax.set_xlabel("Gamma (discount factor)")
+    ax.set_ylabel("Mean Reward")
+    ax.set_title("Impact of Gamma on Performance")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    
+    # Impact of learning rate (averaged over gamma)
+    ax = axes[1]
+    for algo_key, label in algo_labels.items():
+        results = [r for r in hp_results.get(algo_key, []) if "error" not in r]
+        if not results:
+            continue
+        lrs_seen = sorted(set(r["lr"] for r in results))
+        avg_rewards = []
+        for lr in lrs_seen:
+            rews = [r["reward"] for r in results if r["lr"] == lr]
+            avg_rewards.append(np.mean(rews))
+        ax.plot([f"{lr:.0e}" for lr in lrs_seen], avg_rewards, "s-", label=label,
+                color=algo_colors[algo_key], linewidth=2, markersize=8)
+    ax.set_xlabel("Learning Rate")
+    ax.set_ylabel("Mean Reward")
+    ax.set_title("Impact of Learning Rate on Performance")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.savefig("figures/hyperparam_exploration.png", dpi=150)
+    plt.show()
+    print("Saved to figures/hyperparam_exploration.png")
+
+# %% [markdown]
+# ## Analysis
+#
+# ### Key observations
+#
+# **DQN (SB3)**: Value-based method with replay buffer. Being off-policy, it
+# can reuse past experience efficiently. However, with a small MLP and a
+# challenging evaluation config (aggressive vehicles), it tends to have higher
+# variance and sometimes lower performance than PPO.
+#
+# **PPO (SB3)**: On-policy actor-critic method. Generally more stable training
+# curves thanks to the clipping mechanism. It often achieves the best balance
+# between reward and consistency, but requires more environment interactions
+# (on-policy = data is discarded after each update).
+#
+# **DQN (manual)**: Our from-scratch implementation. Interestingly competitive
+# with SB3 models despite being simpler (no vectorized environments during
+# training, no advanced scheduling). This demonstrates that a well-tuned basic
+# DQN can match more engineered implementations on this task.
+#
+# ### Impact of hyperparameters
+#
+# - **Gamma (discount factor)**: Lower gamma (0.8) tends to work well for
+#   highway driving because the relevant planning horizon is short (avoiding the
+#   next collision matters more than long-term strategy). Higher gamma (0.99)
+#   can lead to instability as the agent tries to optimize over a very long
+#   horizon with noisy rewards.
+#
+# - **Learning rate**: Moderate values (3e-4 to 5e-4) provide the best trade-off
+#   between convergence speed and stability. Too high (1e-3) can cause
+#   oscillation; too low would require more training time.
 
 # %% [markdown]
 # ## Select best model

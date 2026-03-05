@@ -406,7 +406,7 @@ TRAIN_CONFIG = {
     "policy_frequency": 1,
 }
 
-RETRAIN = True
+RETRAIN = False
 
 # Device detection: MPS (Apple Silicon) > CUDA > CPU
 # SB3 with MlpPolicy is CPU-bound (env simulation bottleneck), so we keep

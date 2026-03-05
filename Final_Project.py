@@ -394,6 +394,7 @@ if IN_COLAB:
 
 # %%
 import time
+import torch
 from pathlib import Path
 
 TRAIN_ENV_ID = "highway-fast-v0"
@@ -406,6 +407,24 @@ TRAIN_CONFIG = {
 }
 
 RETRAIN = True
+
+# Device detection: MPS (Apple Silicon) > CUDA > CPU
+# SB3 with MlpPolicy is CPU-bound (env simulation bottleneck), so we keep
+# SB3 on CPU but use MPS for the manual DQN which benefits from GPU tensor ops.
+import os
+
+if torch.backends.mps.is_available():
+    DEVICE_MANUAL = "mps"
+elif torch.cuda.is_available():
+    DEVICE_MANUAL = "cuda"
+else:
+    DEVICE_MANUAL = "cpu"
+DEVICE_SB3 = "auto"
+
+N_ENVS = min(8, max(4, os.cpu_count() // 2))
+
+print(f"SB3 device: {DEVICE_SB3} | Manual DQN device: {DEVICE_MANUAL} | "
+      f"Parallel envs: {N_ENVS} | CPU cores: {os.cpu_count()}")
 
 Path("models").mkdir(exist_ok=True)
 Path("figures").mkdir(exist_ok=True)
@@ -424,13 +443,13 @@ from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.callbacks import EvalCallback
 import numpy as np
 
-DQN_TIMESTEPS = 50_000
+DQN_TIMESTEPS = 100_000
 
 if RETRAIN or not Path("models/highway_dqn.zip").exists():
     print("=== Training DQN (SB3) ===")
     
     train_env_dqn = make_vec_env(
-        TRAIN_ENV_ID, n_envs=4,
+        TRAIN_ENV_ID, n_envs=N_ENVS,
         env_kwargs={"config": TRAIN_CONFIG}
     )
     
@@ -451,6 +470,7 @@ if RETRAIN or not Path("models/highway_dqn.zip").exists():
     model_dqn = DQN(
         "MlpPolicy",
         train_env_dqn,
+        device=DEVICE_SB3,
         policy_kwargs=dict(net_arch=[256, 256]),
         learning_rate=5e-4,
         buffer_size=15000,
@@ -494,13 +514,13 @@ training_histories["DQN (SB3)"] = {
 # %%
 from stable_baselines3 import PPO
 
-PPO_TIMESTEPS = 50_000
+PPO_TIMESTEPS = 100_000
 
 if RETRAIN or not Path("models/highway_ppo.zip").exists():
     print("=== Training PPO (SB3) ===")
     
     train_env_ppo = make_vec_env(
-        TRAIN_ENV_ID, n_envs=4,
+        TRAIN_ENV_ID, n_envs=N_ENVS,
         env_kwargs={"config": TRAIN_CONFIG}
     )
     
@@ -521,6 +541,7 @@ if RETRAIN or not Path("models/highway_ppo.zip").exists():
     model_ppo = PPO(
         "MlpPolicy",
         train_env_ppo,
+        device=DEVICE_SB3,
         policy_kwargs=dict(net_arch=[dict(pi=[256, 256], vf=[256, 256])]),
         learning_rate=5e-4,
         n_steps=256,
@@ -613,8 +634,8 @@ class DQNAgent:
     def __init__(self, obs_size, n_actions, hidden_sizes=(256, 256),
                  lr=5e-4, gamma=0.8, buffer_size=15000, batch_size=32,
                  target_update_freq=50, epsilon_start=1.0, epsilon_end=0.05,
-                 epsilon_decay_steps=10000):
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+                 epsilon_decay_steps=10000, device="cpu"):
+        self.device = torch.device(device)
         self.n_actions = n_actions
         self.gamma = gamma
         self.batch_size = batch_size
@@ -714,7 +735,7 @@ class DQNAgent:
 # ### Training loop for DQN from scratch
 
 # %%
-MANUAL_DQN_EPISODES = 400
+MANUAL_DQN_EPISODES = 600
 
 env_manual = gym.make(TRAIN_ENV_ID, config=TRAIN_CONFIG)
 obs_shape = env_manual.observation_space.shape
@@ -734,7 +755,8 @@ agent = DQNAgent(
     target_update_freq=50,
     epsilon_start=1.0,
     epsilon_end=0.05,
-    epsilon_decay_steps=10000,
+    epsilon_decay_steps=15000,
+    device=DEVICE_MANUAL,
 )
 
 manual_dqn_train_time = 0

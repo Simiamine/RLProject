@@ -457,9 +457,14 @@ training_histories = {}
 # **discrete** action spaces like our 5 meta-actions.
 #
 # **Hyperparameters** (tuned via grid search, see below):
-# - `gamma`: discount factor (controls how far ahead the agent plans)
-# - `learning_rate`: step size for gradient descent
-# - `buffer_size`, `batch_size`, `target_update_interval`: replay mechanics
+# - `gamma=0.9`: best discount factor found (sweet spot for planning horizon)
+# - `learning_rate`: linear schedule from 1e-3 to 1e-4 (fast start, stable finish)
+# - `target_update_interval=100`: slower target sync to limit Q-value overestimation
+# - `buffer_size=15000`, `batch_size=32`: replay buffer mechanics
+#
+# The lr schedule addresses the overtraining issue we observed: with a fixed
+# lr=1e-3, the model peaks at ~70k steps then collapses due to Q-value
+# overestimation. Decaying the lr stabilizes late training.
 
 # %%
 from stable_baselines3 import DQN
@@ -491,19 +496,23 @@ if RETRAIN or not Path("models/highway_dqn.zip").exists():
         deterministic=True,
     )
     
+    def dqn_lr_schedule(progress_remaining):
+        """Linear decay from 1e-3 to 1e-4 to avoid Q-value overestimation."""
+        return 1e-3 * max(0.1, progress_remaining)
+    
     model_dqn = DQN(
         "MlpPolicy",
         train_env_dqn,
         device=DEVICE_SB3,
         policy_kwargs=dict(net_arch=[256, 256]),
-        learning_rate=5e-4,
+        learning_rate=dqn_lr_schedule,
         buffer_size=15000,
         learning_starts=200,
         batch_size=32,
-        gamma=0.8,
+        gamma=0.9,
         train_freq=1,
         gradient_steps=1,
-        target_update_interval=50,
+        target_update_interval=100,
         verbose=1,
         tensorboard_log="logs/highway_dqn/",
     )
@@ -551,11 +560,12 @@ training_histories["DQN (SB3)"] = {
 # sample-efficient but more stable.
 #
 # **Hyperparameters** (tuned via grid search):
-# - `gamma`: discount factor
-# - `learning_rate`: optimizer step size
-# - `clip_range` ($\varepsilon$): controls the trust region size
-# - `n_steps`: number of steps collected before each update
-# - `n_epochs`: how many passes over the collected batch
+# - `gamma=0.9`: best discount factor (same as DQN)
+# - `learning_rate`: linear schedule from 3e-4 to 3e-5 (prevents late drift)
+# - `clip_range=0.2`: controls the trust region size
+# - `n_steps=512`: larger batches for more stable gradient estimates
+# - `n_epochs=10`: passes over collected batch
+# - `ent_coef=0.01`: small entropy bonus to maintain exploration diversity
 
 # %%
 from stable_baselines3 import PPO
@@ -584,17 +594,22 @@ if RETRAIN or not Path("models/highway_ppo.zip").exists():
         deterministic=True,
     )
     
+    def ppo_lr_schedule(progress_remaining):
+        """Linear decay from 3e-4 to 3e-5 to stabilize late training."""
+        return 3e-4 * max(0.1, progress_remaining)
+    
     model_ppo = PPO(
         "MlpPolicy",
         train_env_ppo,
         device=DEVICE_SB3,
         policy_kwargs=dict(net_arch=dict(pi=[256, 256], vf=[256, 256])),
-        learning_rate=5e-4,
-        n_steps=256,
+        learning_rate=ppo_lr_schedule,
+        n_steps=512,
         batch_size=64,
         n_epochs=10,
-        gamma=0.8,
+        gamma=0.9,
         clip_range=0.2,
+        ent_coef=0.01,
         verbose=1,
         tensorboard_log="logs/highway_ppo/",
     )
@@ -638,7 +653,10 @@ training_histories["PPO (SB3)"] = {
 # - **Target Network**: hard copy of QNetwork weights, synchronized every 50
 #   gradient steps.
 # - **Epsilon-greedy**: $\varepsilon$ decays linearly from 1.0 to 0.05 over
-#   15,000 steps, then stays at 0.05.
+#   5,000 gradient steps (~350 episodes), then stays at 0.05. This faster
+#   decay (vs the initial 15,000 steps) was critical: with slow decay, the
+#   agent was still taking 62% random actions at episode 400, masking its
+#   true learned policy.
 #
 # ### Difference with SB3 DQN
 #
@@ -824,7 +842,7 @@ agent = DQNAgent(
     target_update_freq=50,
     epsilon_start=1.0,
     epsilon_end=0.05,
-    epsilon_decay_steps=15000,
+    epsilon_decay_steps=5000,
     device=DEVICE_MANUAL,
 )
 

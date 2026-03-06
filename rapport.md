@@ -150,8 +150,31 @@ Les 3 algorithmes convergent vers **~27-28 de reward** en Phase 4, un resultat r
 
 ---
 
+## 6. Bonus : Racetrack
+
+En complement du projet principal, nous avons aborde l'environnement `racetrack-v0` de highway-env, un probleme fondamentalement different : l'agent doit **suivre un circuit courbe** avec des **actions continues** (angle de braquage dans [-1, 1]) sur des episodes de 300 steps.
+
+Nous avons teste 3 approches :
+
+| Algorithme | Type | Reward | Ep. Length |
+|-----------|------|-------:|----------:|
+| **SAC (SB3)** | Off-policy, continu natif | **1117** | **1216** |
+| PPO (SB3) | On-policy, continu natif | 637 | 760 |
+| DQN manual (discretise) | Off-policy, 7 bins | 39 | 58 |
+
+**SAC (Soft Actor-Critic)** (Haarnoja et al., 2018) domine largement. Cet algorithme combine replay buffer (off-policy, sample-efficient) et actions continues natives (politique gaussienne), avec un bonus d'entropie qui encourage l'exploration. Son meilleur eval pendant le training atteignait 1382 avec une survie parfaite (1501/1501 steps, std=8).
+
+**PPO** obtient des resultats intermediaires. Etant on-policy, il est moins sample-efficient que SAC -- il jette les donnees apres chaque update, ce qui est couteux pour des episodes de 300 steps.
+
+**Le DQN discretise** (notre implementation manuelle avec 7 bins de braquage) montre les limites de la discretisation pour le controle continu : les transitions brusques entre bins (ex: 0.0 -> 0.33) ne permettent pas de negocier finement les virages.
+
+**Enseignement principal** : pour le controle continu de vehicules, SAC est l'algorithme de reference. La combinaison off-policy + actions continues + entropie automatique le rend nettement superieur aux alternatives. Tout le code et les modeles sont dans le dossier `bonus/`.
+
+---
+
 **References** :
 - Mnih, V. et al. (2015). Human-level control through deep reinforcement learning. *Nature*, 518, 529-533.
 - Van Hasselt, H. et al. (2016). Deep reinforcement learning with double Q-learning. *AAAI*.
 - Schulman, J. et al. (2017). Proximal policy optimization algorithms. *arXiv:1707.06347*.
+- Haarnoja, T. et al. (2018). Soft actor-critic: Off-policy maximum entropy deep reinforcement learning. *ICML*.
 - Leurent, E. (2018). An environment for autonomous driving decision-making. *GitHub: highway-env*.

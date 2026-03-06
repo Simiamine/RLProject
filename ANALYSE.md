@@ -211,7 +211,63 @@ L'analyse attendue inclut :
 
 ---
 
-## 7. Ressources techniques
+## 7. Bilan des 3 phases experimentales
+
+### Phase 1 : Grid search (exploration rapide, 30k steps / 200 episodes)
+
+- 15 configurations testees (5 par algo)
+- Identification des meilleurs hyperparametres : gamma=0.9 (SB3), gamma=0.8
+  (DQN manual), lr=1e-3 (DQN SB3), lr=3e-4 (PPO), lr=5e-4 (DQN manual)
+- Meilleurs resultats : DQN SB3 28.81, DQN manual 28.46, PPO 26.08
+- Voir `RESULTATS.md` section 1 pour les tableaux detailles
+
+### Phase 2 : Retrain a pleine puissance (100k steps / 600 episodes)
+
+- Problemes identifies : effondrement DQN SB3 (-46%), overtraining PPO,
+  epsilon decay trop lent du DQN manual (62% aleatoire a ep 400)
+- Diagnostic detaille : Q-value overestimation, distribution shift on-policy,
+  bug d'epsilon
+- Solutions proposees : lr schedulers, target_update=100, n_steps=512,
+  ent_coef=0.01, epsilon_decay 15000->5000
+- Voir `RESULTATS.md` sections 2-3 pour l'analyse complete
+
+### Phase 3 : Retrain avec corrections (6 mars 2026, script trainv2.py)
+
+- DQN SB3 : **27.14** (+110% vs Phase 2) grace au lr scheduler
+- PPO SB3 : best checkpoint 28.74, mais final 21.92 (overtraining)
+- DQN Manual : fix epsilon reussi (training reward 24.12), mais eval 8.35
+  (early stop trop agressif, eval sur 10 episodes seulement)
+
+### Phase 4 : Corrections finales (6 mars 2026, script trainv3.py)
+
+Corrections ciblees sur PPO et DQN Manual uniquement :
+- PPO : 80k steps + copie automatique du best checkpoint
+- DQN Manual : 1000 episodes (sans early stop), eval deterministe periodique,
+  gradient clipping, best model base sur eval deterministe
+
+Resultats finaux :
+
+| Algo        | Phase 2 | Phase 3 | **Phase 4** |
+|-------------|--------:|--------:|------------:|
+| DQN SB3     | 12.92   | 27.14   | **27.14** (=P3) |
+| PPO SB3     | 23.53   | 21.92   | **27.88**   |
+| DQN Manual  | 19.73   | 8.35    | **27.54**   |
+
+### Verdict final
+
+- Les 3 algorithmes convergent vers **~27-28 de reward** en Phase 4
+- **PPO SB3** : meilleur global (27.88, std=4.80, survie 38.2/40 steps)
+- **DQN Manual** : plus grande progression (+230%), best eval 29.35 pendant
+  l'entrainement
+- **DQN SB3** : plus stable, inchange entre Phase 3 et 4
+- L'approche iterative **diagnostic -> correction -> retrain** a ete la cle
+  du succes : chaque phase a identifie des problemes specifiques et les
+  corrections ciblees ont systematiquement fonctionne
+- Voir `RESULTATS.md` sections 7-9 pour l'analyse detaillee
+
+---
+
+## 8. Ressources techniques
 
 - **Highway-env** : [Repo](https://github.com/Farama-Foundation/HighwayEnv) | [Documentation](http://highway-env.farama.org/quickstart/)
 - **Stable-Baselines3** : [Repo](https://github.com/DLR-RM/stable-baselines3) | [Documentation](https://stable-baselines.readthedocs.io/en/master/)

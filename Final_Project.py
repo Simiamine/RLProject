@@ -721,7 +721,7 @@ class DQNAgent:
     def __init__(self, obs_size, n_actions, hidden_sizes=(256, 256),
                  lr=5e-4, gamma=0.8, buffer_size=15000, batch_size=32,
                  target_update_freq=50, epsilon_start=1.0, epsilon_end=0.05,
-                 epsilon_decay_steps=10000, device="cpu"):
+                 epsilon_decay_steps=5000, device="cpu"):
         self.device = torch.device(device)
         self.n_actions = n_actions
         self.gamma = gamma
@@ -822,7 +822,7 @@ class DQNAgent:
 # ### Training loop for DQN from scratch
 
 # %%
-MANUAL_DQN_EPISODES = 600
+MANUAL_DQN_EPISODES = 1000
 
 env_manual = gym.make(TRAIN_ENV_ID, config=TRAIN_CONFIG)
 obs_shape = env_manual.observation_space.shape

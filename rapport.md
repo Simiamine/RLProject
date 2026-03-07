@@ -75,6 +75,16 @@ gamma=0.9 est optimal pour SB3 (horizon effectif ~10 steps). Le DQN manual prefe
 
 ---
 
+### 2.4 Justification des choix
+
+Nous avons retenu le **DQN via Stable-Baselines3** comme premier algorithme parce que l'environnement HighwayEnv expose un espace d'actions discret et de petite taille (cinq meta-actions), ce pour quoi DQN est naturellement concu. En apprenant une fonction de valeur $Q(s,a)$ sur un ensemble d'actions fini, DQN constitue un algorithme de reference bien compris et facile a comparer aux autres methodes. L'implementation fournie par Stable-Baselines3 (replay buffer, target network, normalisation) nous permet de nous concentrer sur le probleme de conduite et le réglage des hyperparametres plutot que sur les details bas niveau, tout en obtenant deja un bon compromis entre performance et simplicite ; il sert ainsi de baseline solide pour evaluer les gains eventuels des autres algorithmes.
+
+Le **PPO** a ete choisi en complement du DQN pour representer la famille des methodes de policy gradient. Il optimise directement la politique $\pi_\theta(a|s)$ en limitant les mises a jour grace a un objectif tronque (clipped), ce qui donne un entrainement generalement plus stable que les policy gradient classiques. PPO est repute robuste aux choix d'hyperparametres, ce qui est appreciable sur un environnement complexe et bruite comme HighwayEnv (trafic dense, vehicules agressifs). Sa nature on-policy et l'utilisation d'une estimation d'avantage (GAE) permettent de bien gerer le compromis exploration/exploitation, ce qui favorise des comportements de conduite plus fluides et plus surs. Enfin, comparer PPO a DQN sur le meme environnement permet d'evaluer si une methode policy-based surpasse une methode value-based dans ce contexte et d'observer les differences de stabilite d'entrainement et de qualite finale.
+
+L'implementation d'un **DQN from scratch en PyTorch** repond a l'objectif pedagogique du projet : demontrer une comprehension fine de l'algorithme plutot que d'utiliser une boite noire. En ecrivant nous-memes le reseau Q, le replay buffer, l'epsilon-greedy, la target network et la boucle d'entrainement, nous controlons chaque detail (taille du reseau, strategie d'exploration, gestion du buffer) et pouvons tester des variantes et en mesurer l'impact sur les courbes d'apprentissage. Cela permet aussi une comparaison equitable avec DQN (SB3) et PPO en termes de performances, stabilite et sensibilite aux hyperparametres ; des resultats proches valident notre implementation, des ecarts mettent en evidence l'importance de certains choix. Enfin, presenter une implementation complete d'un algorithme de Deep RL renforce la valeur du rapport et de la soutenance en montrant la maitrise des fondements mathematiques et algorithmiques derriere les resultats obtenus sur HighwayEnv.
+
+---
+
 ## 4. Resultats et analyse iterative
 
 Notre approche experimentale a suivi 4 phases iteratives de type **diagnostic -> correction -> validation**.

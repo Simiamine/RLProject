@@ -1,190 +1,216 @@
-# Rapport : Reinforcement Learning sur Highway-Env
+# Rapport de Projet : Reinforcement Learning sur Highway-Env
 
-**Equipe** : Amine M'ZALI, Mehdi SAADI, Samy Bouaissa
-**Formation** : BDML 2 -- Efrei Paris
-**Cours** : Reinforcement Learning (Victor Morand)
-**Date** : 6 mars 2026
+**Equipe** : Amine M'ZALI, Mehdi SAADI, Samy Bouaissa  
+**Formation** : BDML 2 - Efrei Paris  
+**Cours** : Reinforcement Learning (Victor Morand)  
+**Date** : 25 mars 2026
 
 ---
 
 ## 1. Introduction
 
-L'objectif de ce projet est d'entrainer un agent de Reinforcement Learning a conduire sur une autoroute simulee via l'environnement `highway-v0` de la librairie highway-env (Leurent, 2018). L'agent doit maximiser sa vitesse tout en evitant les collisions avec 40 vehicules agressifs (`AggressiveVehicle`) sur 3 voies, pendant 40 secondes.
+### 1.1 Objectif
 
-L'espace d'actions est discret (5 meta-actions : changer de voie a gauche/droite, accelerer, ralentir, maintenir). L'observation est une matrice 5x5 (cinematique de 5 vehicules proches : presence, position x/y, vitesse vx/vy). La recompense est normalisee dans [0,1] : bonus de vitesse, penalite de -1 pour collision.
+L'objectif de ce projet est d'entraîner un agent de Reinforcement Learning à conduire sur une autoroute simulée dans l'environnement `highway-v0` de la librairie [highway-env](https://github.com/Farama-Foundation/HighwayEnv). L'agent doit apprendre à rouler le plus vite possible, éviter les collisions et privilégier la voie de droite.
 
-Nous avons implemente **3 algorithmes** : DQN et PPO via Stable-Baselines3, et un DQN implemente entierement a la main avec PyTorch. L'entrainement utilise la variante rapide `highway-fast-v0` (x15), l'evaluation se fait sur `highway-v0` avec la configuration imposee (EVAL_CONFIG).
+Étant un groupe de 3, nous avons implémenté **3 algorithmes** au lieu de 2, dont **un implémenté entièrement à la main** (sans Stable-Baselines3).
 
----
+### 1.2 L'environnement
 
-## 2. Algorithmes utilises
+L'environnement simule une autoroute à 3 voies avec 40 véhicules agressifs (`AggressiveVehicle`). Le véhicule ego dispose de 5 actions discrètes (changer de voie gauche/droite, accélérer, ralentir, maintenir). L'observation est une matrice 5×5 (5 véhicules proches, 5 features par véhicule : présence, x, y, vx, vy), normalisée dans [-1, 1].
 
-### 2.1 DQN via Stable-Baselines3
+La récompense combine vitesse (bonus linéaire entre 20-30 m/s), collision (pénalité -1, fin d'épisode) et voie de droite (petit bonus 0.1), normalisée dans [0, 1].
 
-**Deep Q-Network** (Mnih et al., 2015) approxime la Q-function optimale par un reseau de neurones (MLP 256x256). Deux mecanismes stabilisent l'entrainement :
-
-- **Replay Buffer** (15 000 transitions) : decorele les echantillons en tirant aleatoirement depuis un buffer circulaire.
-- **Target Network** (mise a jour toutes les 100 steps) : fournit des cibles stables $y = r + \gamma \max_{a'} Q_{target}(s', a')$.
-
-La perte est l'erreur TD quadratique : $\mathcal{L} = \mathbb{E}[(Q(s,a) - y)^2]$.
-
-**Hyperparametres finaux** : gamma=0.9, lr schedule 1e-3 -> 1e-4 (lineaire), target_update_interval=100, 100k timesteps, 7 environnements paralleles.
-
-### 2.2 PPO via Stable-Baselines3
-
-**Proximal Policy Optimization** (Schulman et al., 2017) est une methode actor-critic on-policy. L'acteur optimise directement la politique $\pi_\theta(a|s)$, le critique estime $V(s)$ pour calculer l'avantage $A_t = R_t - V(s_t)$.
-
-Le clipping du ratio d'importance empeche les mises a jour destructrices :
-$$\mathcal{L}^{CLIP} = \mathbb{E}[\min(r_t A_t, \text{clip}(r_t, 1\pm\varepsilon) A_t)]$$
-
-**Hyperparametres finaux** : gamma=0.9, lr schedule 3e-4 -> 3e-5, n_steps=512, clip_range=0.2, ent_coef=0.01, 80k timesteps.
-
-### 2.3 DQN from scratch (PyTorch)
-
-Pour demontrer notre comprehension de l'algorithme, nous avons implemente un DQN complet sans librairie :
-
-- **QNetwork** : MLP 25 -> 256 -> 256 -> 5 (ReLU)
-- **ReplayBuffer** : deque de capacite 15 000
-- **Target Network** : copie synchronisee toutes les 50 gradient steps
-- **Epsilon-greedy** : decay lineaire de 1.0 a 0.05 sur 5 000 gradient steps
-- **Gradient clipping** : `clip_grad_norm_` avec max_norm=10
-
-**Difference avec SB3 DQN** : pas de vectorized envs (1 seul env), pas de callbacks automatiques, ~20k gradient steps vs 100k pour SB3. Malgre cela, les performances sont comparables une fois correctement configure (voir section 4).
-
-**Hyperparametres finaux** : gamma=0.8, lr=5e-4, 1000 episodes, eval deterministe periodique (15 eps / 50 eps).
+La configuration d'évaluation est volontairement difficile : espacement initial très faible (0.1) et conducteurs agressifs, sur 40 secondes.
 
 ---
 
-## 3. Exploration des hyperparametres
+## 2. Algorithmes utilisés
 
-### Grid search (Phase 1)
+### 2.1 DQN via Stable-Baselines3 (value-based, off-policy)
 
-Nous avons teste 15 configurations (5 par algo) en faisant varier gamma (0.8, 0.9, 0.99) et le learning rate. Chaque configuration a ete entrainee a budget reduit (30k steps SB3 / 200 episodes DQN manual) puis evaluee sur EVAL_CONFIG (15 episodes).
+**Deep Q-Network** (Mnih et al., 2015) approxime la fonction Q optimale Q*(s, a) avec un réseau de neurones. Deux innovations stabilisent l'entraînement :
 
-**Impact de gamma** (meilleur lr par algo) :
+- **Experience Replay Buffer** : les transitions (s, a, r, s', done) sont stockées et échantillonnées aléatoirement, brisant la corrélation temporelle.
+- **Target Network** : une copie du Q-network, mise à jour tous les N steps, fournit des cibles stables : y = r + γ · max Q_target(s', a')
 
-| gamma | DQN SB3 | PPO SB3 | DQN Manual |
-|-------|--------:|--------:|-----------:|
-| 0.8   | 13.79   | 23.24   | **28.46**  |
-| 0.9   | **28.81** | **26.08** | 26.95  |
-| 0.99  | 26.13   | 21.19   | 21.14      |
+La loss est l'erreur TD quadratique : L = E[(Q(s,a) - y)²]
 
-gamma=0.9 est optimal pour SB3 (horizon effectif ~10 steps). Le DQN manual prefere gamma=0.8 (horizon ~5 steps) car l'entrainement sur un seul environnement genere des transitions correlees temporellement, et un horizon plus court stabilise les cibles Q.
+**Hyperparamètres retenus** (après grid search) : γ=0.9, lr schedule 1e-3→1e-4 (décroissance linéaire), target_update_interval=100, buffer=15000, batch=32, réseau MLP [256, 256].
 
-**Impact du learning rate** : DQN SB3 necessite un lr eleve (1e-3) pour converger en 30k steps. PPO fonctionne mieux avec un lr conservatif (3e-4) grace au clipping qui protege deja contre les updates trop agressifs. Le DQN manual est optimal avec lr=5e-4.
+### 2.2 PPO via Stable-Baselines3 (policy gradient, on-policy)
 
----
+**Proximal Policy Optimization** (Schulman et al., 2017) est un algorithme actor-critic. L'acteur optimise directement la politique π(a|s), tandis que le critique estime V(s) pour calculer l'avantage A_t = R_t - V(s_t).
 
-### 2.4 Justification des choix
+PPO contraint les mises à jour via le clipping du ratio d'importance-sampling :
+L^CLIP = E[min(r_t(θ)·A_t, clip(r_t(θ), 1-ε, 1+ε)·A_t)]
 
-Nous avons retenu le **DQN via Stable-Baselines3** comme premier algorithme parce que l'environnement HighwayEnv expose un espace d'actions discret et de petite taille (cinq meta-actions), ce pour quoi DQN est naturellement concu. En apprenant une fonction de valeur $Q(s,a)$ sur un ensemble d'actions fini, DQN constitue un algorithme de reference bien compris et facile a comparer aux autres methodes. L'implementation fournie par Stable-Baselines3 (replay buffer, target network, normalisation) nous permet de nous concentrer sur le probleme de conduite et le réglage des hyperparametres plutot que sur les details bas niveau, tout en obtenant deja un bon compromis entre performance et simplicite ; il sert ainsi de baseline solide pour evaluer les gains eventuels des autres algorithmes.
+Contrairement au DQN, PPO est **on-policy** : il collecte des données avec la politique courante, met à jour, puis les jette. Moins sample-efficient mais plus stable.
 
-Le **PPO** a ete choisi en complement du DQN pour representer la famille des methodes de policy gradient. Il optimise directement la politique $\pi_\theta(a|s)$ en limitant les mises a jour grace a un objectif tronque (clipped), ce qui donne un entrainement generalement plus stable que les policy gradient classiques. PPO est repute robuste aux choix d'hyperparametres, ce qui est appreciable sur un environnement complexe et bruite comme HighwayEnv (trafic dense, vehicules agressifs). Sa nature on-policy et l'utilisation d'une estimation d'avantage (GAE) permettent de bien gerer le compromis exploration/exploitation, ce qui favorise des comportements de conduite plus fluides et plus surs. Enfin, comparer PPO a DQN sur le meme environnement permet d'evaluer si une methode policy-based surpasse une methode value-based dans ce contexte et d'observer les differences de stabilite d'entrainement et de qualite finale.
+**Hyperparamètres retenus** : γ=0.9, lr schedule 3e-4→3e-5, clip_range=0.2, n_steps=512, n_epochs=10, ent_coef=0.01, réseau MLP [256, 256] (acteur et critique séparés).
 
-L'implementation d'un **DQN from scratch en PyTorch** repond a l'objectif pedagogique du projet : demontrer une comprehension fine de l'algorithme plutot que d'utiliser une boite noire. En ecrivant nous-memes le reseau Q, le replay buffer, l'epsilon-greedy, la target network et la boucle d'entrainement, nous controlons chaque detail (taille du reseau, strategie d'exploration, gestion du buffer) et pouvons tester des variantes et en mesurer l'impact sur les courbes d'apprentissage. Cela permet aussi une comparaison equitable avec DQN (SB3) et PPO en termes de performances, stabilite et sensibilite aux hyperparametres ; des resultats proches valident notre implementation, des ecarts mettent en evidence l'importance de certains choix. Enfin, presenter une implementation complete d'un algorithme de Deep RL renforce la valeur du rapport et de la soutenance en montrant la maitrise des fondements mathematiques et algorithmiques derriere les resultats obtenus sur HighwayEnv.
+### 2.3 DQN implémenté à la main (PyTorch)
 
----
+Pour démontrer notre compréhension du DQN, nous l'avons implémenté entièrement en PyTorch :
 
-## 4. Resultats et analyse iterative
+- **QNetwork** : MLP à 2 couches cachées de 256 neurones + ReLU. Input = observation aplatie (25 dimensions), output = 5 Q-values.
+- **ReplayBuffer** : buffer circulaire de capacité 15 000.
+- **Target Network** : copie dure tous les 50 gradient steps.
+- **Epsilon-greedy** : décroissance linéaire de ε=1.0 à ε=0.05 sur 5 000 gradient steps (~350 épisodes).
 
-Notre approche experimentale a suivi 4 phases iteratives de type **diagnostic -> correction -> validation**.
+La méthode `predict()` est rendue compatible avec l'interface SB3 pour que les fonctions `evaluate()` et `record_video()` fonctionnent directement.
 
-### Phase 2 : Problemes identifies
-
-L'entrainement a pleine puissance (100k steps / 600 episodes) a revele 3 problemes majeurs :
-
-**DQN SB3 -- Q-value overestimation** : avec lr=1e-3 fixe, la reward monte a 23.98 (70k steps) puis s'effondre a 12.92 (100k), soit -46%. Le mecanisme $\max_{a'} Q_{target}(s',a')$ amplifie les surestimations a chaque update (Van Hasselt et al., 2016). Avec un lr eleve, ces erreurs se propagent rapidement.
-
-**PPO -- Overtraining on-policy** : la reward chute de 28.63 (35k) a 19.51 (70k) avant de remonter partiellement a 23.53 (100k). Quand la politique s'ameliore, la distribution des etats rencontres change brutalement (distribution shift), forcant une readaptation couteuse.
-
-**DQN Manual -- Epsilon decay trop lent** : configure en gradient steps (15 000), l'agent avait encore 62% d'actions aleatoires a l'episode 400. L'early stopping coupait avant que l'agent ne devienne exploitant, masquant la vraie qualite de la politique apprise.
-
-### Phase 3 : Corrections et impact
-
-| Correction | Algo | Avant | Apres | Impact |
-|-----------|------|------:|------:|--------|
-| Lr schedule 1e-3 -> 1e-4 | DQN SB3 | 12.92 | **27.14** | **+110%** |
-| Lr schedule 3e-4 -> 3e-5 + n_steps=512 + ent_coef=0.01 | PPO | 23.53 | 21.92 (final) / 28.74 (best) | Best ckpt ameliore |
-| epsilon_decay 15000 -> 5000 | DQN Manual | 19.73 | 8.35 | Training ameliore, eval decevante |
-
-Le **lr scheduler** a ete la correction la plus impactante : en decroissant le learning rate lineairement, les updates deviennent plus prudents en fin d'entrainement, ce qui stabilise les Q-values et empeche l'effondrement post-pic.
-
-Le DQN Manual montrait une bonne progression en training (reward 24.12 a ep 275, vs 14.26 en Phase 2) mais l'eval finale restait basse (8.35) a cause de l'early stop trop agressif et de la selection du best model basee sur la reward d'entrainement (bruitee par epsilon).
-
-### Phase 4 : Corrections finales
-
-| Correction | Algo | Phase 3 | **Phase 4** |
-|-----------|------|--------:|------------:|
-| 80k steps + copie best checkpoint | PPO | 21.92 | **27.88** |
-| 1000 eps, eval det., grad clip, pas d'early stop | DQN Manual | 8.35 | **27.54** |
-| (inchange) | DQN SB3 | 27.14 | **27.14** |
-
-Pour le PPO, reduire a 80k steps et copier automatiquement le best checkpoint evite l'overtraining post-pic. Pour le DQN Manual, les 5 corrections cumulees (1000 episodes, eval deterministe periodique, gradient clipping, best model sur eval, pas d'early stop) ont transforme les resultats : le best_eval pendant l'entrainement atteint **29.35**, le meilleur score absolu du projet.
-
-### Tableau comparatif toutes phases
-
-| Algo        | Phase 1 | Phase 2 | Phase 3 | **Phase 4** |
-|-------------|--------:|--------:|--------:|------------:|
-| DQN SB3     | 28.81   | 12.92   | 27.14   | **27.14**   |
-| PPO SB3     | 26.08   | 23.53   | 21.92   | **27.88**   |
-| DQN Manual  | 28.46   | 19.73   | 8.35    | **27.54**   |
-
-Les 3 algorithmes convergent vers **~27-28 de reward** en Phase 4, un resultat remarquable montrant que des architectures fondamentalement differentes (off-policy value-based, on-policy actor-critic, implementation manuelle) atteignent des performances similaires une fois correctement configurees.
+**Différence clé avec SB3** : pas d'environnements vectorisés pendant l'entraînement, pas de normalisation automatique, contrôle total de la boucle d'entraînement.
 
 ---
 
-## 5. Conclusion
+## 3. Exploration des hyperparamètres
 
-### Verdict
+### 3.1 Grid search (Phase 1)
 
-**PPO SB3** est le meilleur modele global : reward=27.88, std=4.80 (meilleure consistance), survie 38.2/40 steps. Sa stabilite inherente (clipping) le rend plus fiable que le DQN malgre des performances brutes similaires.
+Nous avons testé 15 configurations (5 par algorithme) avec un budget réduit (30k steps SB3, 200 épisodes DQN manual), puis évalué sur EVAL_CONFIG (15 épisodes).
 
-**DQN Manual** est la plus grande reussite technique : passer de 8.35 a 27.54 (+230%) en identifiant et corrigeant 5 problemes distincts demontre une comprehension profonde de l'algorithme. Le best_eval de 29.35 montre que notre implementation from scratch peut rivaliser avec les librairies optimisees.
+| Algo | γ=0.8 (meilleur lr) | γ=0.9 (meilleur lr) | γ=0.99 (meilleur lr) |
+|------|-----:|-----:|------:|
+| DQN SB3 | 13.79 | **28.81** | 26.13 |
+| PPO SB3 | 23.24 | **26.08** | 21.19 |
+| DQN Manual | **28.46** | 26.95 | 21.14 |
 
-**DQN SB3** illustre l'importance du lr scheduling : une seule correction (lr decay) a suffi pour passer de 12.92 a 27.14 (+110%).
+### 3.2 Impact de gamma
 
-### Limites
+γ=0.9 est le sweet spot pour les algorithmes SB3 : il offre un horizon de planification d'environ 10 steps, suffisant pour anticiper les véhicules proches sans accumuler trop d'incertitude.
 
-- **Un seul run par configuration** : pas de moyenne multi-seeds (3-5 seeds seraient necessaires pour des resultats statistiquement robustes).
-- **Pas de Double DQN** : reduirait l'overestimation residuelle.
-- **DQN Manual sur 1 seul env** : les transitions correlees temporellement augmentent la variance par rapport aux 7 envs paralleles de SB3.
-- **Evaluation sur 30 episodes** : echantillon relativement petit pour un environnement stochastique.
+Le DQN manual préfère γ=0.8 (horizon ~5 steps) car notre implémentation plus simple (pas d'envs vectorisés, gradient steps par transition) bénéficie d'un horizon plus court qui stabilise les cibles Q.
 
-### Pistes d'amelioration
+### 3.3 Impact du learning rate
 
-- Double DQN pour limiter le maximization bias
-- Prioritized Experience Replay pour un apprentissage plus efficace
-- Vectorized envs pour le DQN manual (decorrelation des transitions)
-- Curriculum learning : entrainer progressivement sur des configs de plus en plus difficiles
-- Multi-seed averaging pour des resultats plus robustes
+- **DQN SB3** a besoin d'un lr élevé (1e-3) pour converger rapidement à 30k steps.
+- **PPO** préfère un lr plus conservatif (3e-4) : le clipping protège déjà contre les mises à jour trop agressives.
+- **DQN manual** fonctionne mieux avec un lr modéré (5e-4) offrant le meilleur compromis convergence/stabilité (std=1.2, remarquablement faible).
 
----
-
-## 6. Bonus : Racetrack
-
-En complement du projet principal, nous avons aborde l'environnement `racetrack-v0` de highway-env, un probleme fondamentalement different : l'agent doit **suivre un circuit courbe** avec des **actions continues** (angle de braquage dans [-1, 1]) sur des episodes de 300 steps.
-
-Nous avons teste 3 approches :
-
-| Algorithme | Type | Reward | Ep. Length |
-|-----------|------|-------:|----------:|
-| **SAC (SB3)** | Off-policy, continu natif | **1117** | **1216** |
-| PPO (SB3) | On-policy, continu natif | 637 | 760 |
-| DQN manual (discretise) | Off-policy, 7 bins | 39 | 58 |
-
-**SAC (Soft Actor-Critic)** (Haarnoja et al., 2018) domine largement. Cet algorithme combine replay buffer (off-policy, sample-efficient) et actions continues natives (politique gaussienne), avec un bonus d'entropie qui encourage l'exploration. Son meilleur eval pendant le training atteignait 1382 avec une survie parfaite (1501/1501 steps, std=8).
-
-**PPO** obtient des resultats intermediaires. Etant on-policy, il est moins sample-efficient que SAC -- il jette les donnees apres chaque update, ce qui est couteux pour des episodes de 300 steps.
-
-**Le DQN discretise** (notre implementation manuelle avec 7 bins de braquage) montre les limites de la discretisation pour le controle continu : les transitions brusques entre bins (ex: 0.0 -> 0.33) ne permettent pas de negocier finement les virages.
-
-**Enseignement principal** : pour le controle continu de vehicules, SAC est l'algorithme de reference. La combinaison off-policy + actions continues + entropie automatique le rend nettement superieur aux alternatives. Tout le code et les modeles sont dans le dossier `bonus/`.
+![Impact des hyperparamètres gamma et learning rate](figures/hyperparam_exploration.png)
 
 ---
 
-**References** :
-- Mnih, V. et al. (2015). Human-level control through deep reinforcement learning. *Nature*, 518, 529-533.
-- Van Hasselt, H. et al. (2016). Deep reinforcement learning with double Q-learning. *AAAI*.
-- Schulman, J. et al. (2017). Proximal policy optimization algorithms. *arXiv:1707.06347*.
-- Haarnoja, T. et al. (2018). Soft actor-critic: Off-policy maximum entropy deep reinforcement learning. *ICML*.
-- Leurent, E. (2018). An environment for autonomous driving decision-making. *GitHub: highway-env*.
+## 4. Résultats et évolution par phases
+
+### 4.1 Problèmes identifiés en Phase 2 (100k steps)
+
+L'entraînement à pleine puissance a révélé des problèmes majeurs pour les 3 algorithmes :
+
+| Algo | Phase 1 (30k) | Phase 2 final | Phase 2 best | Problème identifié |
+|------|------:|------:|------:|------|
+| DQN SB3 | 28.81 | 12.92 | 23.98 (70k) | Q-value overestimation |
+| PPO SB3 | 26.08 | 23.53 | 28.63 (35k) | Distribution shift on-policy |
+| DQN Manual | 28.46 | 19.73 | N/A | Epsilon decay trop lent |
+
+**DQN SB3 - Q-value overestimation** : avec lr=1e-3 fixe, les Q-values sont surestimées à cause du max dans la cible y = r + γ·max Q_target(s', a'). Le modèle passe de 23.98 (70k) à 12.92 (100k), soit **-46%**.
+
+**PPO SB3 - Distribution shift** : étant on-policy, quand la politique s'améliore, la distribution d'états change. Le clipping limite la chute (-32% vs -46% pour DQN) et permet un rebond partiel.
+
+**DQN Manual - Bug epsilon decay** : configuré en gradient steps (15 000), l'agent avait encore 62% d'actions aléatoires à l'épisode 400 ! L'early stop se déclenchait car la reward d'entraînement (polluée par l'exploration) ne progressait plus, alors que la politique sous-jacente était potentiellement bonne.
+
+### 4.2 Corrections appliquées (Phases 3 et 4)
+
+| Algo | Correction | Impact |
+|------|-----------|--------|
+| DQN SB3 | lr scheduler 1e-3→1e-4 | Élimine l'effondrement post-pic |
+| DQN SB3 | target_update_interval 50→100 | Ralentit la propagation des erreurs |
+| PPO SB3 | lr scheduler 3e-4→3e-5 | Stabilise le training tardif |
+| PPO SB3 | n_steps 256→512, ent_coef=0.01 | Gradients plus stables, exploration maintenue |
+| PPO SB3 | Budget 80k + copie auto du best | Évite l'overtraining |
+| DQN Manual | epsilon_decay 15000→5000 | **Fix critique** : ε=0.05 dès épisode 275 |
+| DQN Manual | Eval déterministe périodique | Best model basé sur la vraie performance |
+| DQN Manual | Gradient clipping (max_norm=10) | Stabilise l'entraînement tardif |
+| DQN Manual | 1000 épisodes sans early stop | Exploitation complète |
+
+### 4.3 Résultats finaux
+
+| Algo | Phase 1 | Phase 2 | Phase 3 | **Phase 4** |
+|------|--------:|--------:|--------:|------------:|
+| DQN SB3 | 28.81 | 12.92 | **27.14** | 27.14 |
+| PPO SB3 | 26.08 | 23.53 | 21.92 | **27.88** |
+| DQN Manual | 28.46 | 19.73 | 8.35 | **27.54** |
+
+Les 3 algorithmes convergent vers **~27-28 de reward** en Phase 4, un résultat remarquable : malgré des architectures fondamentalement différentes, les 3 approches atteignent des performances similaires une fois correctement diagnostiquées et corrigées.
+
+![Comparaison des 3 algorithmes](figures/benchmark_comparison.png)
+
+---
+
+## 5. Analyse comparative
+
+### 5.1 Benchmark final (30 épisodes, EVAL_CONFIG)
+
+| Algo | Reward | Std | Ep. Length | Survie |
+|------|-------:|----:|-----------:|--------|
+| **PPO SB3** | **27.88** | **4.80** | **38.2** | 95.5% |
+| DQN Manual | 27.54 | 7.35 | 36.6 | 91.5% |
+| DQN SB3 | 27.14 | 8.17 | 34.8 | 87.0% |
+
+**PPO** est le meilleur modèle global avec la meilleure reward, la plus faible variance (std=4.80) et la meilleure survie (38.2/40 steps).
+
+### 5.2 Off-policy vs On-policy
+
+Le DQN (off-policy) réutilise les données du replay buffer, ce qui le rend plus sample-efficient en théorie mais moins stable (les données deviennent "stale"). Le PPO (on-policy) jette les données après chaque update mais bénéficie de données toujours fraîches. Sur highway-env avec des véhicules agressifs, la stabilité de PPO est un avantage significatif.
+
+### 5.3 SB3 vs implémentation manuelle
+
+Notre DQN manual est compétitif avec les modèles SB3 (27.54 vs 27.14 pour DQN SB3) malgré l'absence d'environnements vectorisés et d'optimisations ingénierie. Il est aussi nettement plus rapide à entraîner (~21 min pour 1000 épisodes vs ~24 min pour 100k steps SB3).
+
+### 5.4 Courbe d'entraînement du DQN manual
+
+![Courbe d'entraînement DQN manual](figures/manual_dqn_training.png)
+
+La courbe montre la progression typique d'un DQN : exploration forte au début (epsilon élevé), puis apprentissage rapide une fois epsilon réduit (~épisode 200-300), suivi d'un plateau en phase d'exploitation.
+
+---
+
+## 6. Overtraining et variance en RL
+
+### 6.1 Le paradoxe de l'overtraining
+
+Contrairement au supervised learning où plus de données = meilleur modèle, en RL le modèle génère ses propres données. Une politique qui se dégrade produit des données de mauvaise qualité, créant un cercle vicieux. L'EvalCallback qui sauvegarde le best model est donc **indispensable** : le modèle final n'est souvent pas le meilleur.
+
+### 6.2 Variance inter-runs
+
+Le même algorithme avec les mêmes hyperparamètres peut donner des résultats très différents d'un run à l'autre (seeds aléatoires, environnement stochastique, composition du replay buffer). Idéalement, il faudrait reporter des résultats moyennés sur 3-5 seeds. Le temps limité ne nous l'a pas permis, mais nous reconnaissons cette limite.
+
+### 6.3 L'approche itérative comme clé du succès
+
+Notre méthodologie **diagnostic → correction → retrain** a été la clé : chaque phase a identifié des problèmes spécifiques (Q-value overestimation, epsilon trop lent, overtraining) et les corrections ciblées ont systématiquement fonctionné, faisant passer le DQN Manual de 8.35 à 27.54 (+230%).
+
+---
+
+## 7. Bonus : Racetrack
+
+En bonus, nous avons appliqué nos 3 algorithmes à l'environnement `racetrack-v0`, un circuit avec des virages serrés nécessitant des actions continues (accélération, direction). Nous avons adapté le PPO et le SAC (qui remplace le DQN, inadapté aux actions continues) via SB3, ainsi que notre DQN manual avec discrétisation de l'espace d'actions.
+
+Les résultats montrent que le SAC (off-policy, actions continues) est particulièrement adapté à ce type d'environnement, tandis que le PPO reste compétitif.
+
+---
+
+## 8. Conclusion
+
+Ce projet nous a permis de mettre en pratique les concepts fondamentaux du RL :
+
+- **DQN** : comprendre le replay buffer, le target network, et le problème de Q-value overestimation
+- **PPO** : comprendre l'approche actor-critic, le clipping, et le trade-off on/off-policy
+- **Implémentation manuelle** : maîtriser chaque composant du DQN (réseau, buffer, epsilon-greedy, boucle d'entraînement)
+- **Tuning** : l'importance cruciale des hyperparamètres (gamma, lr) et des techniques de stabilisation (lr schedulers, gradient clipping, EvalCallback)
+
+Le principal enseignement est que le RL est un domaine où l'**ingénierie expérimentale** compte autant que la théorie : diagnostiquer les problèmes, proposer des corrections ciblées, et valider itérativement est essentiel pour obtenir de bonnes performances.
+
+---
+
+## Annexe : Structure du code
+
+| Fichier | Description |
+|---------|------------|
+| `Final_Project.ipynb` | Notebook principal (entraînement, évaluation, figures) |
+| `Final_Project.py` | Version Python du notebook (format percent) |
+| `models/` | Poids des modèles entraînés (.zip SB3, .pt PyTorch) |
+| `figures/` | Graphiques de benchmark et hyperparamètres |
+| `videos/` | Vidéos de l'agent aléatoire et entraîné |
+| `bonus/` | Environnement racetrack (notebook, modèles, figures) |
+| `trainv2.py`, `trainv3.py` | Scripts d'entraînement (Phases 3 et 4) |
